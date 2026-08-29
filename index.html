@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>李大霄价值投资雷达 · 蓝筹逆向布局</title>
+<meta name="description" content="基于《李大霄投资战略》理念的蓝筹价值选股工具：低PE、破净、高股息、持续分红，配合沪深300估值历史分位给出择时与仓位建议。">
+<link rel="stylesheet" href="./assets/style.css">
+</head>
+<body>
+
+<div class="hero">
+    <div class="wrap">
+        <h1>李大霄价值投资雷达</h1>
+        <div class="sub">低 PE · 破净 · 高股息 · 持续分红 —— 做好人，买好股，得好报</div>
+        <div class="meta-row" id="metaRow">
+            <span class="chip">数据加载中…</span>
+        </div>
+    </div>
+</div>
+
+<div class="disclaimer-bar">
+    ⚠️ 本页仅为《李大霄投资战略》书中观点的量化梳理与工具化实现，<b>不构成任何投资建议</b>，据此操作风险自负
+</div>
+
+<div class="wrap">
+
+    <!-- 大盘温度计 -->
+    <div class="card">
+        <h2>大盘估值温度计<span class="hint">沪深300 滚动 PE 历史分位</span></h2>
+        <div id="gaugeBox"><div class="loading">加载中…</div></div>
+        <div id="signalBox"></div>
+    </div>
+
+    <!-- 择时三要素 -->
+    <div class="card">
+        <h2>择时三要素<span class="hint">估值水平 · 产业资本 · 市场情绪</span></h2>
+        <div id="factorsBox"><div class="loading">加载中…</div></div>
+    </div>
+
+    <!-- 蓝筹排名 -->
+    <div class="card">
+        <h2>蓝筹价值排名<span class="hint">点击行展开四维详情 · 点击表头排序</span></h2>
+        <div class="filters">
+            <button class="fbtn on" data-f="all">全部</button>
+            <button class="fbtn" data-f="pb">破净股</button>
+            <button class="fbtn" data-f="div">高股息 ≥5%</button>
+            <button class="fbtn" data-f="bank">银行保险</button>
+            <button class="fbtn" data-f="central">央企龙头</button>
+            <span class="filter-note">已按「黑五类」规则硬排除后的结果</span>
+        </div>
+        <div id="tableBox"><div class="loading">加载中…</div></div>
+    </div>
+
+    <!-- 理念 -->
+    <div class="card">
+        <h2>这套体系在做什么</h2>
+        <div class="doctrine">
+            <div class="dcard">
+                <div class="dt">三大铁律</div>
+                <ul>
+                    <li>余钱投资：只用长期闲钱，严禁杠杆</li>
+                    <li>理性投资、逆向操作：狂热时淡泊，恐慌时勇敢</li>
+                    <li>价值投资：买业绩稳定、长期分红的蓝筹</li>
+                </ul>
+            </div>
+            <div class="dcard">
+                <div class="dt">避开「黑五类」</div>
+                <ul>
+                    <li>小盘股：总市值 &lt; 200 亿</li>
+                    <li>次新股：连续现金分红 &lt; 5 年</li>
+                    <li>垃圾股：PE 为负（亏损）</li>
+                    <li>题材 / 伪成长：PE &gt; 50 倍</li>
+                    <li>不派息：近 12 个月无现金分红</li>
+                </ul>
+            </div>
+            <div class="dcard">
+                <div class="dt">四维打分权重</div>
+                <ul>
+                    <li>股息率 35%（最看重"得好报"）</li>
+                    <li>低 PE 25%</li>
+                    <li>低 PB 25%（破净加分）</li>
+                    <li>分红稳定性 15%</li>
+                </ul>
+            </div>
+            <div class="dcard">
+                <div class="dt">仓位：正金字塔</div>
+                <ul>
+                    <li>钻石底（&lt;20% 分位）：仓位 70-80%</li>
+                    <li>婴儿底（20-35%）：仓位 50-65%</li>
+                    <li>正常（35-65%）：仓位 30-45%</li>
+                    <li>偏热（65-85%）：仓位 10-25%</li>
+                    <li>地球顶（&gt;85%）：仓位 0-10%，淡泊离场</li>
+                </ul>
+            </div>
+        </div>
+        <div class="foot">
+            <b>与短线体系的区别</b>：本工具不做 K 线信号、不做量价择时、不做指标回测，只在大周期底部区域
+            筛选低估蓝筹并给出分批建仓建议。它和你手上的 D 点、放量滞胀那套短线逻辑是两条完全不同的路，
+            <b>不建议混用</b>。
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>数据口径与来源</h2>
+        <div class="foot" id="sourceNote"></div>
+        <div class="foot" style="margin-top:10px">
+            <b>注意事项</b><br>
+            · 股息率按「近 12 个月内已完成除权的每股派息合计 ÷ 当前股价」计算，含中期分红、剔除未实施预案，
+            与部分行情软件按单一报告期折算的口径可能存在差异。<br>
+            · 分位得分是样本内相对排名，不代表绝对估值贵贱；PE 历史分位基于 2005 年以来的月度样本，
+            不同数据源的口径（整体法 / 中位数法）会有偏差。<br>
+            · 数据每日收盘后自动更新，非盘中实时行情。
+        </div>
+    </div>
+
+</div>
+
+<div class="wrap">
+    <div class="foot" style="text-align:center;padding:18px 0">
+        本页内容为书中观点的量化复现，仅供研究参考，<b>不构成投资建议</b>。市场有风险，投资需谨慎。
+    </div>
+</div>
+
+<script src="./assets/app.js"></script>
+</body>
+</html>

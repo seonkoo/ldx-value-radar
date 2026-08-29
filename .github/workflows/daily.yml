@@ -1,0 +1,76 @@
+name: 每日更新蓝筹价值数据
+
+on:
+  schedule:
+    # 北京时间 18:00（收盘后）自动跑；GitHub cron 使用 UTC，18:00 CST = 10:00 UTC
+    - cron: '0 10 * * 1-5'
+  workflow_dispatch:      # 允许手动触发
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ldx-radar-daily
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install akshare pandas requests
+
+      - name: 构建数据
+        id: build
+        continue-on-error: true
+        run: python scripts/build_data.py
+
+      - name: 校验产物
+        if: steps.build.outcome == 'success'
+        run: |
+          python - <<'PY'
+          import json, sys
+          d = json.load(open('data/data.json', encoding='utf-8'))
+          n = len(d.get('stocks', []))
+          print(f"股票条目: {n}")
+          if n < 50:
+              print("::error::数据条目异常，拒绝提交")
+              sys.exit(1)
+          PY
+
+      - name: 提交数据
+        if: steps.build.outcome == 'success'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/data.json
+          if git diff --staged --quiet; then
+            echo "数据无变化，跳过提交"
+          else
+            git commit -m "chore(data): 更新蓝筹价值数据 $(date +'%Y-%m-%d')"
+            git push
+          fi
+
+      - name: 上传产物备份
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ldx-data-${{ github.run_number }}
+          path: data/data.json
+          if-no-files-found: ignore
+          retention-days: 7
