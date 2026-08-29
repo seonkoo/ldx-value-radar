@@ -75,7 +75,7 @@
 
 ```bash
 # 安装依赖
-pip install akshare pandas requests
+pip install -r requirements.txt
 
 # 生成数据（约 100 秒）
 python scripts/build_data.py
@@ -120,7 +120,10 @@ git push -u origin main
 
 也可在 Actions 页面点 **Run workflow** 手动触发。
 
-首次部署后，Actions 需要仓库有写权限：
+> **刻意没有监听 `push` 事件**：改代码时不需要重跑约 100 秒的数据抓取，省 Actions 额度。
+> 想刷新数据时手动 Run workflow 即可。
+
+Actions 需要仓库有写权限（首次部署后检查一次）：
 **Settings → Actions → General → Workflow permissions → Read and write permissions**
 
 ---

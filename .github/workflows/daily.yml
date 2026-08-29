@@ -5,8 +5,8 @@ on:
     # 北京时间 18:00（收盘后）自动跑；GitHub cron 使用 UTC，18:00 CST = 10:00 UTC
     - cron: '0 10 * * 1-5'
   workflow_dispatch:      # 允许手动触发
-  push:
-    branches: [main]
+# 刻意不监听 push：改代码时无需重跑约 100 秒的数据抓取，省 Actions 额度。
+# 需要刷新数据时，到 Actions 页面手动 Run workflow。
 
 permissions:
   contents: write
