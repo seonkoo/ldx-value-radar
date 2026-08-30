@@ -27,6 +27,7 @@ import json
 import sys
 import time
 import warnings
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -62,6 +63,8 @@ CONFIG = {
     "min_pe": 0,                   # PE 必须为正：排除垃圾股(亏损)
     "min_dividend_years": 5,       # 连续分红年数：排除次新股、无稳定分红能力者
     "min_dividend_yield": 0.0,     # 股息率必须 > 0
+    # —— 八步财报深度分析覆盖的标的数（每只约 3 次请求）——
+    "deep_top_n": 30,
     # —— 四维打分权重（合计 100）——
     "weights": {
         "dividend": 35,   # 股息率：李大霄最看重的"得好报"
@@ -255,7 +258,9 @@ def fetch_market_valuation():
     """沪深300 历史 PE 分位（乐咕，2005 年至今）"""
     log("拉取沪深300 历史估值分位...")
     out = {"available": False}
-    try:
+    # 乐咕偶发返回非 JSON（反爬），重试 3 次；这是择时模块的唯一数据源，不能轻易放弃
+    for attempt in range(1, 4):
+      try:
         df = ak.stock_index_pe_lg(symbol="沪深300")
         pe = pd.to_numeric(df["滚动市盈率"], errors="coerce").dropna()
         if len(pe) < 30:
@@ -286,8 +291,12 @@ def fetch_market_valuation():
             ],
         }
         log(f"  沪深300 PE={cur:.2f} 分位={pct:.1f}% 样本={len(pe)}天")
-    except Exception as e:
-        log(f"  [WARN] 大盘估值分位获取失败: {e}")
+        return out
+      except Exception as e:
+        log(f"  [WARN] 第 {attempt} 次获取失败: {str(e)[:60]}")
+        if attempt < 3:
+            time.sleep(2 * attempt)
+    log("  [WARN] 大盘估值分位获取失败，择时信号将降级为「数据不足」")
     return out
 
 
@@ -303,8 +312,18 @@ def fetch_capital_action(pool_codes):
             raise ValueError("蓝筹池内无记录")
         inc = df[df["持股变动信息-增减"] == "增持"]
         dec = df[df["持股变动信息-增减"] == "减持"]
+        # 个股级统计，供八步分析的第 3、4 步使用
+        codes = df["代码"].astype(str)
+        per_stock = {
+            c: {
+                "增持次数": int(((codes == c) & (df["持股变动信息-增减"] == "增持")).sum()),
+                "减持次数": int(((codes == c) & (df["持股变动信息-增减"] == "减持")).sum()),
+            }
+            for c in set(codes)
+        }
         out = {
             "available": True,
+            "per_stock": per_stock,
             "增持家数": int(inc["代码"].nunique()),
             "减持家数": int(dec["代码"].nunique()),
             "增持次数": int(len(inc)),
@@ -436,6 +455,93 @@ def build_timing(mkt_val, passed, capital):
     return {"signal": sig, "sentiment": sentiment, "capital": capital, "valuation": mkt_val}
 
 
+# ============================================================ 7. 八步深度分析
+def build_deep_analysis(scored, cap_map, top_n):
+    """
+    对排名前 top_n 的标的执行「八步财报分析法」。
+    只对头部标的做，是因为每只需要 3 次请求（财务 + PE + PB），
+    全量 185 只跑下来要十几分钟，且不符合「只深研值得研究的」这一原则。
+    """
+    log(f"八步财报深度分析：对 TOP {top_n} 执行...")
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import deep_analysis as da
+    except Exception as e:
+        log(f"  [WARN] 深度分析模块加载失败: {e}")
+        return {"available": False, "items": [], "top_n": top_n}
+
+    top = scored.head(top_n)
+    try:
+        industry_map = da.fetch_industry_map()
+        log(f"  行业映射 {len(industry_map)} 只")
+    except Exception as e:
+        log(f"  [WARN] 行业映射获取失败: {e}")
+        industry_map = {}
+
+    def analyze(row):
+        code, r = row
+        stock = {
+            "代码": code, "名称": str(r.get("名称", "")),
+            "价格": float(r["价格"]), "PE": float(r["PE"]), "PB": float(r["PB"]),
+            "股息率": float(r["股息率"]), "连续分红年": int(r["连续分红年"]),
+            "分红稳定性": float(r["分红稳定性"]), "总分": float(r["总分"]),
+        }
+        try:
+            fin = da.fetch_financials(code)
+        except Exception:
+            fin = None
+        try:
+            val = da.fetch_self_valuation(code)
+        except Exception:
+            val = {}
+        try:
+            steps = da.evaluate_steps(fin, val, stock, industry_map.get(code, "未知"), cap_map)
+        except Exception as e:
+            steps = []
+            log(f"  [WARN] {code} 八步评估失败: {e}")
+
+        # 统计通过项 / 风险项，便于页面概览
+        ok_n = warn_n = 0
+        for s in steps:
+            for it in s.get("items", []):
+                if it.get("skip_reason"):
+                    continue
+                if it.get("ok") is True:
+                    ok_n += 1
+                elif it.get("ok") is False:
+                    warn_n += 1
+        risks = []
+        for s in steps:
+            for rk in s.get("risks", []):
+                if rk != "未触发量化风险阈值":
+                    risks.append(rk)
+
+        return {
+            "代码": code, "名称": stock["名称"], "行业": industry_map.get(code, "未知"),
+            "总分": round(stock["总分"], 1), "价格": stock["价格"],
+            "PE": round(stock["PE"], 2), "PB": round(stock["PB"], 2),
+            "股息率": stock["股息率"],
+            "达标项": ok_n, "关注项": warn_n, "风险数": len(risks),
+            "风险摘要": risks,
+            "steps": steps,
+        }
+
+    items = []
+    # 并发 4 路：新浪/百度接口较慢，并发能显著压缩总耗时，又不至于触发限流
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        for res in ex.map(analyze, top.iterrows()):
+            if res:
+                items.append(res)
+
+    log(f"  深度分析完成 {len(items)} 只")
+    return {
+        "available": True,
+        "top_n": top_n,
+        "count": len(items),
+        "items": items,
+    }
+
+
 # ============================================================ 主流程
 def main():
     t0 = time.time()
@@ -463,7 +569,12 @@ def main():
 
     mkt_val = fetch_market_valuation()
     capital = fetch_capital_action(codes)
+    # per_stock 仅内部使用（约 20KB），不写入 data.json
+    cap_per_stock = (capital or {}).pop("per_stock", {})
     timing = build_timing(mkt_val, scored, capital)
+
+    # ---- 八步财报深度分析：仅对排名靠前的标的做，控制请求量与耗时 ----
+    deep = build_deep_analysis(scored, cap_per_stock, CONFIG["deep_top_n"])
 
     # —— 组装输出 ——
     stocks = []
@@ -505,17 +616,22 @@ def main():
                 "max_pe": CONFIG["max_pe"],
                 "min_dividend_years": CONFIG["min_dividend_years"],
             },
+            "deep_top_n": CONFIG["deep_top_n"],
             "sources": {
                 "蓝筹池": "中证指数(沪深300成分股)",
                 "行情估值": "腾讯行情 PE(TTM)/PB/总市值（已与百度估值交叉校验）",
                 "分红派息": "东方财富 分红送配（近12个月实际除权派息）",
                 "大盘估值分位": "乐咕乐股 沪深300 历史 PE",
                 "产业资本": "东方财富 股东增减持",
+                "三张报表": "新浪财经 财务摘要（80 指标，年报口径取结构项、最新期取增速项）",
+                "个股历史估值": "百度股市通 近三年 PE/PB",
+                "行业归属": "新浪财经 行业板块（证监会行业分类）",
             },
             "cost_sec": round(time.time() - t0, 1),
         },
         "timing": timing,
         "stocks": stocks,
+        "deep": deep,
     }
 
     out_path = DATA_DIR / "data.json"

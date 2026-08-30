@@ -219,6 +219,151 @@ function detailRow(r) {
     </div></td></tr>`;
 }
 
+/* ---------------- 八步财报深度分析 ---------------- */
+const deepOpen = new Set();
+
+function fmtInd(it) {
+    if (it.v === null || it.v === undefined) return '--';
+    const v = Number(it.v);
+    if (isNaN(v)) return '--';
+    const u = it.unit || '';
+    if (u === '%') return v.toFixed(2) + '%';
+    if (u === '年' || u === '/100') return String(Math.round(v));
+    if (u === '') return v.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
+    return v.toFixed(2) + u;
+}
+
+function renderIndList(items) {
+    if (!items || !items.length) return '';
+    return `<div class="ind-list">` + items.map(it => {
+        const skipped = !!it.skip_reason;
+        const cls = skipped ? 'ind skip ind-skip' : (it.ok === true ? 'ind ind-good' : (it.ok === false ? 'ind ind-bad' : 'ind ind-skip'));
+        const v = fmtInd(it);
+        return `<div class="${cls}">
+            <div class="ik"><span class="dot"></span>${esc(it.k)}</div>
+            <div class="iv">${skipped ? '不适用' : v}</div>
+            <div class="im">${esc(it.good || '')}</div>
+            ${skipped ? `<div class="iskip">${esc(it.skip_reason)}</div>` : ''}
+        </div>`;
+    }).join('') + `</div>`;
+}
+
+function renderChecklist(list) {
+    if (!list || !list.length) return '';
+    return `<ul class="checklist">${list.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`;
+}
+
+function renderStep(s) {
+    let body = '';
+    let extra = '';
+
+    if (s.summary) body += `<div class="step-sum">${esc(s.summary)}</div>`;
+
+    // 可量化指标
+    if (s.items && s.items.length) body += renderIndList(s.items);
+
+    // 规模（第 2 步）
+    if (s.scale) {
+        const chips = Object.entries(s.scale)
+            .map(([k, v]) => `<span class="scale-chip">${esc(k)} <b>${fmt(v, 1)} 亿</b></span>`)
+            .join('');
+        body += `<div class="scale-row">${chips}</div>`;
+    }
+
+    // 半量化信息（第 3、7 步）
+    if (s.quantified) {
+        const chips = Object.entries(s.quantified)
+            .map(([k, v]) => {
+                let color = 'var(--ink)';
+                if (k === '增减持净向') color = String(v).indexOf('增') >= 0 ? 'var(--up)' : 'var(--down)';
+                else if (k === '大股东减持次数' && Number(v) > 0) color = 'var(--hot)';
+                else if (k === '大股东增持次数' && Number(v) > 0) color = 'var(--down)';
+                return `<span class="scale-chip">${esc(k)} <b style="color:${color}">${esc(v)}</b></span>`;
+            }).join('');
+        body += `<div class="scale-row">${chips}</div>`;
+    }
+
+    // 风险（第 6 步）
+    if (s.risks !== undefined) {
+        body += s.risks.length
+            ? `<ul class="risk-list">${s.risks.map(r => `<li>${esc(r)}</li>`).join('')}</ul>`
+            : `<div class="risk-ok">未触发量化风险阈值</div>`;
+    }
+
+    // 检查清单
+    body += renderChecklist(s.checklist);
+
+    // 情景测算（第 8 步）
+    if (s.scenarios && s.scenarios.length) {
+        body += `<div class="scen-grid">` + s.scenarios.map(sc => {
+            const c = Number(sc.change);
+            const col = c > 0 ? 'var(--up)' : 'var(--down)';
+            return `<div class="scen ${sc.tone}">
+                <div class="sn">${esc(sc.name)}</div>
+                <div class="sp">${fmt(sc.price)}</div>
+                <div class="sc" style="color:${col}">${c > 0 ? '+' : ''}${fmt(c, 1)}%</div>
+                <div class="sd">${esc(sc.desc)}</div>
+                <div class="sr">ROE ${fmt(sc.roe)}% → 目标 PB ${fmt(sc.target_pb)}</div>
+            </div>`;
+        }).join('') + `</div>`;
+        if (s.basis) body += `<div class="scen-basis">测算基准：${esc(s.basis)}</div>`;
+    }
+
+    if (s.note) extra = `<div class="${s.scenarios ? 'scen-tip' : 'qnote'}">${esc(s.note)}</div>`;
+
+    const typeLabel = { quantitative: '可量化', qualitative: '定性', mixed: '半量化' }[s.type] || s.type;
+
+    return `<div class="step">
+        <div class="step-head">
+            <span class="step-no">${s.no}</span>
+            <span class="step-title">${esc(s.title)}</span>
+            <span class="step-type ${esc(s.type)}">${typeLabel}</span>
+            ${s.period ? `<span class="step-period">${esc(s.period)}</span>` : ''}
+        </div>
+        ${body}${extra}
+    </div>`;
+}
+
+function renderDeep(deep) {
+    const box = $('#deepBox');
+    if (!deep || !deep.available || !deep.items || !deep.items.length) {
+        box.innerHTML = '<div class="err">八步深度分析数据暂不可用</div>';
+        return;
+    }
+    $('#deepN').textContent = deep.count;
+    $('#deepHint').textContent = `点击展开 · 共 ${deep.count} 只`;
+
+    box.innerHTML = deep.items.map((it, i) => {
+        const open = deepOpen.has(it.代码);
+        const badges = [
+            it.风险数 > 0
+                ? `<span class="badge risk">${it.风险数} 项风险</span>`
+                : `<span class="badge ok">无量化风险</span>`,
+            `<span class="badge ${it.关注项 > 0 ? 'warn' : 'none'}">达标 ${it.达标项} / 关注 ${it.关注项}</span>`,
+        ].join('');
+
+        return `<div class="deep-item ${open ? 'open' : ''}" data-c="${it.代码}">
+            <div class="deep-head">
+                <span class="deep-rank">${i + 1}</span>
+                <span class="deep-title">${esc(it.名称)}</span>
+                <span class="deep-code">${it.代码}</span>
+                <span class="deep-ind">${esc(it.行业 || '行业未知')}</span>
+                <span class="deep-badges">${badges}</span>
+                <span class="deep-arrow">▶</span>
+            </div>
+            <div class="deep-body">
+                ${(it.steps || []).map(renderStep).join('')}
+            </div>
+        </div>`;
+    }).join('');
+
+    $$('#deepBox .deep-head').forEach(h => h.onclick = () => {
+        const c = h.parentElement.dataset.c;
+        deepOpen.has(c) ? deepOpen.delete(c) : deepOpen.add(c);
+        h.parentElement.classList.toggle('open');
+    });
+}
+
 /* ---------------- 元信息 ---------------- */
 function renderMeta(m) {
     $('#metaRow').innerHTML = `
@@ -242,6 +387,7 @@ async function boot() {
         renderGauge(d.timing.valuation);
         renderTiming(d.timing);
         applyView();
+        renderDeep(d.deep);
 
         $$('.fbtn').forEach(b => b.onclick = () => {
             $$('.fbtn').forEach(x => x.classList.remove('on'));

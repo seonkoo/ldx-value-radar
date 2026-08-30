@@ -225,6 +225,117 @@ tbody tr.open { background: #eef6fc; }
 .dcard li { padding: 3px 0 3px 14px; position: relative; }
 .dcard li::before { content: "·"; position: absolute; left: 3px; color: var(--gold); font-weight: 700; }
 
+/* ---------------- 八步财报深度分析 ---------------- */
+.deep-note {
+    font-size: 12.5px; color: var(--ink-2); background: #fbfcfe;
+    border: 1px solid var(--line); border-left: 3px solid var(--gold);
+    border-radius: 8px; padding: 10px 13px; margin-bottom: 14px; line-height: 1.7;
+}
+.deep-note b { color: var(--ink); }
+
+.deep-item { border: 1px solid var(--line); border-radius: 10px; margin-bottom: 10px; overflow: hidden; }
+.deep-head {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 12px 14px; cursor: pointer; background: #fff;
+    transition: background .12s;
+}
+.deep-head:hover { background: #f7fafd; }
+.deep-item.open .deep-head { background: #f3f8fc; }
+.deep-rank {
+    width: 24px; height: 24px; flex-shrink: 0; border-radius: 6px;
+    background: var(--navy); color: #fff; font-size: 12px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+}
+.deep-title { font-weight: 700; font-size: 14px; }
+.deep-code { font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.deep-ind { font-size: 11.5px; color: var(--ink-3); background: #f1f5f9; padding: 1px 7px; border-radius: 4px; }
+.deep-badges { display: flex; gap: 5px; flex-wrap: wrap; margin-left: auto; }
+.badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 5px; white-space: nowrap; }
+.badge.ok   { background: #e8f6ef; color: #157a52; }
+.badge.warn { background: #fdf3e3; color: #a9701b; }
+.badge.risk { background: #fdeceb; color: var(--hot); }
+.badge.none { background: #f1f5f9; color: var(--ink-3); }
+.deep-arrow { color: var(--ink-3); font-size: 11px; transition: transform .18s; }
+.deep-item.open .deep-arrow { transform: rotate(90deg); }
+
+.deep-body { display: none; padding: 4px 14px 16px; border-top: 1px solid var(--line); background: #fcfdfe; }
+.deep-item.open .deep-body { display: block; }
+
+/* 单个步骤 */
+.step { border-bottom: 1px dashed var(--line); padding: 13px 0; }
+.step:last-child { border-bottom: none; padding-bottom: 2px; }
+.step-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.step-no {
+    width: 20px; height: 20px; flex-shrink: 0; border-radius: 50%;
+    background: var(--navy); color: #fff; font-size: 11px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+}
+.step-title { font-weight: 700; font-size: 13.5px; }
+.step-type { font-size: 10.5px; padding: 1px 7px; border-radius: 4px; font-weight: 600; }
+.step-type.quantitative { background: #e8f1fa; color: #1d6fa5; }
+.step-type.qualitative  { background: #f3eefb; color: #6b4bab; }
+.step-type.mixed        { background: #eaf6f3; color: #1f7a68; }
+.step-period { font-size: 11px; color: var(--ink-3); margin-left: auto; }
+.step-sum { font-size: 12.5px; color: var(--ink-2); margin-bottom: 9px; line-height: 1.6; }
+
+/* 指标列表 */
+.ind-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px; }
+.ind { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 8px 11px; }
+.ind.skip { background: #fbfbfc; border-style: dashed; }
+.ind .ik { font-size: 11px; color: var(--ink-3); display: flex; align-items: center; gap: 5px; }
+.ind .ik .dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.ind-good .ik .dot { background: var(--down); }
+.ind-bad  .ik .dot { background: var(--hot); }
+.ind-skip .ik .dot { background: var(--ink-3); }
+.ind .iv { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; margin: 2px 0 1px; }
+.ind-bad .iv { color: var(--hot); }
+.ind-skip .iv { color: var(--ink-3); font-weight: 600; }
+.ind .im { font-size: 11px; color: var(--ink-3); line-height: 1.5; }
+.ind .iskip { font-size: 11px; color: var(--warm); margin-top: 3px; line-height: 1.4; }
+
+/* 规模条 */
+.scale-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+.scale-chip { background: #f1f5f9; border-radius: 6px; padding: 3px 9px; font-size: 11.5px; color: var(--ink-2); }
+.scale-chip b { color: var(--ink); font-variant-numeric: tabular-nums; }
+
+/* 检查清单 */
+.checklist { list-style: none; }
+.checklist li {
+    font-size: 12.5px; color: var(--ink-2); padding: 4px 0 4px 22px;
+    position: relative; line-height: 1.6;
+}
+.checklist li::before {
+    content: "☐"; position: absolute; left: 2px; top: 4px;
+    color: var(--gold); font-size: 13px;
+}
+
+/* 风险列表 */
+.risk-list { list-style: none; margin-bottom: 9px; }
+.risk-list li {
+    font-size: 12.5px; color: var(--hot); background: #fdeceb;
+    border-radius: 6px; padding: 5px 10px; margin-bottom: 5px;
+}
+.risk-list li::before { content: "⚠ "; }
+.risk-ok { font-size: 12.5px; color: #157a52; background: #e8f6ef; border-radius: 6px; padding: 5px 10px; }
+.risk-ok::before { content: "✓ "; }
+
+/* 情景测算 */
+.scen-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.scen { border: 1px solid var(--line); border-radius: 9px; padding: 11px 12px; background: #fff; }
+.scen.cold    { border-top: 3px solid var(--cold); }
+.scen.neutral { border-top: 3px solid var(--neutral); }
+.scen.warm    { border-top: 3px solid var(--warm); }
+.scen .sn { font-size: 12px; font-weight: 700; color: var(--ink-2); }
+.scen .sp { font-size: 20px; font-weight: 700; margin: 3px 0 1px; font-variant-numeric: tabular-nums; }
+.scen .sc { font-size: 12px; font-weight: 600; }
+.scen .sd { font-size: 11.5px; color: var(--ink-3); margin-top: 4px; line-height: 1.5; }
+.scen .sr { font-size: 11px; color: var(--ink-3); margin-top: 5px; }
+.scen-basis {
+    font-size: 11.5px; color: var(--ink-2); background: #f1f5f9;
+    border-radius: 6px; padding: 7px 10px; margin-top: 9px; line-height: 1.6;
+}
+.scen-tip, .qnote { font-size: 11.5px; color: var(--ink-3); margin-top: 7px; line-height: 1.6; }
+
 .foot { margin-top: 18px; font-size: 12px; color: var(--ink-3); line-height: 1.8; }
 .foot b { color: var(--ink-2); }
 
@@ -240,4 +351,7 @@ tbody tr.open { background: #eef6fc; }
     .filter-note { display: none; }
     body { padding-bottom: 40px; }
     table { min-width: 720px; font-size: 12px; }
+    .scen-grid { grid-template-columns: 1fr; }
+    .ind-list { grid-template-columns: 1fr; }
+    .deep-badges { margin-left: 0; width: 100%; }
 }
