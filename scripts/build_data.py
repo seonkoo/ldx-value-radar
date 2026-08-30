@@ -254,11 +254,70 @@ def compute_dividend_features(div):
 
 
 # ============================================================ 4. 大盘估值分位
+VAL_CACHE = DATA_DIR / "valuation_cache.json"
+
+
+def _load_val_cache():
+    """读取上次成功抓取的历史 PE 序列（供乐咕不可用时降级推算）"""
+    try:
+        with open(VAL_CACHE, encoding="utf-8") as f:
+            c = json.load(f)
+        if isinstance(c.get("series"), list) and len(c["series"]) >= 30:
+            return c
+    except Exception:
+        pass
+    return None
+
+
+def _save_val_cache(series, last_pe, last_index, last_date):
+    """主路径成功后写入缓存；缓存写入失败不影响本次构建"""
+    try:
+        with open(VAL_CACHE, "w", encoding="utf-8") as f:
+            json.dump({
+                "updated": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                "last_pe": round(float(last_pe), 4),
+                "last_index": round(float(last_index), 4) if last_index else None,
+                "last_date": str(last_date)[:10],
+                "series": series,
+            }, f, ensure_ascii=False)
+    except Exception as e:
+        log(f"  [WARN] 估值缓存写入失败（不影响本次构建）: {str(e)[:60]}")
+
+
+def fetch_index_spot():
+    """沪深300 实时点位（腾讯）。仅用于乐咕挂掉时推算当前 PE。"""
+    try:
+        r = requests.get("https://qt.gtimg.cn/q=sh000300", timeout=10, headers=UA)
+        r.encoding = "gbk"
+        f = r.text.split("~")
+        if len(f) > 3:
+            return float(f[3])
+    except Exception:
+        pass
+    return None
+
+
+def _pct_of(series_pes, cur):
+    """在给定历史序列上算当前值的百分位"""
+    s = pd.Series([float(x) for x in series_pes]).dropna()
+    return float((s < cur).sum() / len(s) * 100)
+
+
 def fetch_market_valuation():
-    """沪深300 历史 PE 分位（乐咕，2005 年至今）"""
+    """沪深300 历史 PE 分位（乐咕，2005 年至今）
+
+    乐咕是唯一覆盖 2005 年至今的长历史数据源，但偶发被反爬拦截返回非 JSON。
+    而它一旦拿不到，整个择时模块（钻石底/地球顶/仓位建议）就全废 —— 这是不可接受的。
+
+    因此把历史序列缓存到 data/valuation_cache.json，两条路径：
+      主路径   乐咕可用    → 直接算分位，并顺手刷新缓存
+      降级路径 乐咕挂了    → 用缓存历史序列 + 实时指数点位推算当前 PE
+    推算依据是 PE 与指数点位成正比（成分股盈利在短期内可视作不变）：
+      当前PE ≈ 缓存时PE × (当前点位 / 缓存时点位)
+    """
     log("拉取沪深300 历史估值分位...")
     out = {"available": False}
-    # 乐咕偶发返回非 JSON（反爬），重试 3 次；这是择时模块的唯一数据源，不能轻易放弃
+
     for attempt in range(1, 4):
       try:
         df = ak.stock_index_pe_lg(symbol="沪深300")
@@ -266,9 +325,20 @@ def fetch_market_valuation():
         if len(pe) < 30:
             raise ValueError("历史样本不足")
         cur = float(pe.iloc[-1])
-        pct = float((pe < cur).sum() / len(pe) * 100)
+        pct = _pct_of(pe.tolist(), cur)
+        # 乐咕自带指数点位，可用于降级时按比例推算，无需额外请求
+        try:
+            idx = float(pd.to_numeric(df["指数"], errors="coerce").dropna().iloc[-1])
+        except Exception:
+            idx = None
+        series = [
+            {"d": str(d)[:10], "p": round(float(v), 2)}
+            for d, v in zip(df["日期"], pe)
+        ]
         out = {
             "available": True,
+            "degraded": False,
+            "source_note": "乐咕乐股 沪深300 滚动市盈率（2005 年至今月度样本）",
             "pe": round(cur, 2),
             "percentile": round(pct, 1),
             "history_min": round(float(pe.min()), 2),
@@ -285,18 +355,63 @@ def fetch_market_valuation():
                 "65": round(float(pe.quantile(0.65)), 2),
                 "85": round(float(pe.quantile(0.85)), 2),
             },
-            "series": [
-                {"d": str(d)[:10], "p": round(float(v), 2)}
-                for d, v in zip(df["日期"].tail(250), pe.tail(250))
-            ],
+            "series": series[-250:],
         }
         log(f"  沪深300 PE={cur:.2f} 分位={pct:.1f}% 样本={len(pe)}天")
+        _save_val_cache(series, cur, idx, df["日期"].iloc[-1])
         return out
       except Exception as e:
         log(f"  [WARN] 第 {attempt} 次获取失败: {str(e)[:60]}")
         if attempt < 3:
             time.sleep(2 * attempt)
-    log("  [WARN] 大盘估值分位获取失败，择时信号将降级为「数据不足」")
+
+    # ---------- 降级路径：缓存历史序列 + 实时指数点位 ----------
+    log("  [WARN] 乐咕连续 3 次失败，尝试用本地缓存 + 实时指数点位推算...")
+    cache = _load_val_cache()
+    spot = fetch_index_spot()
+    if not cache:
+        log("  [WARN] 无本地缓存可用，择时信号降级为「数据不足」")
+        return out
+    if not spot:
+        log("  [WARN] 实时指数点位也获取失败，择时信号降级为「数据不足」")
+        return out
+
+    hist = [float(x["p"]) for x in cache["series"]]
+    base_pe = float(cache.get("last_pe") or hist[-1])
+    base_idx = cache.get("last_index")
+    if not base_idx:
+        log("  [WARN] 缓存缺少基准点位，择时信号降级为「数据不足」")
+        return out
+
+    est_pe = base_pe * (spot / float(base_idx))
+    pct = _pct_of(hist, est_pe)
+    s = pd.Series(hist)
+    out = {
+        "available": True,
+        "degraded": True,
+        "source_note": (
+            f"乐咕今日不可用，改用 {cache.get('last_date', '上次')} 缓存的历史序列 "
+            f"按指数点位推算（基准 PE {base_pe:.2f} @ 点位 {float(base_idx):.2f} → 当前点位 {spot:.2f}）"
+        ),
+        "pe": round(est_pe, 2),
+        "percentile": round(pct, 1),
+        "history_min": round(float(s.min()), 2),
+        "history_max": round(float(s.max()), 2),
+        "history_median": round(float(s.median()), 2),
+        "sample_days": int(len(hist)),
+        "start_date": str(cache["series"][0]["d"])[:10],
+        "end_date": str(cache.get("last_date"))[:10],
+        "quantiles": {
+            "10": round(float(s.quantile(0.10)), 2),
+            "20": round(float(s.quantile(0.20)), 2),
+            "35": round(float(s.quantile(0.35)), 2),
+            "50": round(float(s.quantile(0.50)), 2),
+            "65": round(float(s.quantile(0.65)), 2),
+            "85": round(float(s.quantile(0.85)), 2),
+        },
+        "series": cache["series"][-250:],
+    }
+    log(f"  [降级] 推算 PE={est_pe:.2f} 分位={pct:.1f}%（缓存更新于 {cache.get('updated')}）")
     return out
 
 
@@ -621,7 +736,11 @@ def main():
                 "蓝筹池": "中证指数(沪深300成分股)",
                 "行情估值": "腾讯行情 PE(TTM)/PB/总市值（已与百度估值交叉校验）",
                 "分红派息": "东方财富 分红送配（近12个月实际除权派息）",
-                "大盘估值分位": "乐咕乐股 沪深300 历史 PE",
+                "大盘估值分位": (
+                    "乐咕乐股 沪深300 历史 PE"
+                    if not (mkt_val or {}).get("degraded")
+                    else "乐咕乐股 沪深300 历史 PE（今日源不可用，已按指数点位推算）"
+                ),
                 "产业资本": "东方财富 股东增减持",
                 "三张报表": "新浪财经 财务摘要（80 指标，年报口径取结构项、最新期取增速项）",
                 "个股历史估值": "百度股市通 近三年 PE/PB",

@@ -66,7 +66,8 @@ function renderGauge(v) {
             <div><div class="k">历史中位</div><div class="v">${fmt(v.history_median)}</div></div>
             <div><div class="k">历史最高</div><div class="v" style="color:var(--hot)">${fmt(v.history_max)}</div></div>
             <div><div class="k">样本区间</div><div class="v" style="font-size:12px">${v.start_date} 起 ${v.sample_days} 点</div></div>
-        </div>`;
+        </div>
+        ${v.degraded ? `<div class="val-note">⚠️ 乐咕数据源今日不可用，当前 PE 为按指数点位推算的近似值<br>${esc(v.source_note || '')}</div>` : ''}`;
 }
 
 /* ---------------- 择时信号 ---------------- */

@@ -58,7 +58,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/data.json
+          # valuation_cache.json 是乐咕挂掉时的降级依据，必须一起提交才能跨 run 持久化
+          git add data/data.json data/valuation_cache.json
           if git diff --staged --quiet; then
             echo "数据无变化，跳过提交"
           else
