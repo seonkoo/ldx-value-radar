@@ -107,25 +107,82 @@
 
 ---
 
-## 三、本地运行
+## 三、本地运行（完全不依赖 GitHub）
 
 ```bash
-# 安装依赖
+# 1. 安装依赖（一次性）
 pip install -r requirements.txt
 
-# 生成数据（约 100 秒）
+# 2. 生成数据（约 100 秒）或 直接 python scripts/update_local.py（含校验，不做 git）
 python scripts/build_data.py
 
-# 起本地服务（必须走 HTTP，file:// 打开会被浏览器跨域策略拦住）
-python -m http.server 8000
-# 浏览器打开 http://localhost:8000
+# 3. 起服务（必须走 HTTP，file:// 打开会被浏览器跨域策略拦住）
+python scripts/start_local.py        # 局域网：手机连同一个 WiFi 看
+python scripts/start_net.py          # 互联网：手机在外网（4G/公司）也能看
 ```
 
-Windows 下同样适用（PowerShell / CMD 均可）。
+Windows 下同样适用（PowerShell / CMD 均可），也提供了一键 `.bat` 封装：
+
+| 你想要 | 运行 |
+|---|---|
+| 只在本机 / 同 WiFi 看 | 双击 `scripts\start_local.bat` |
+| **手机在外网也能看（不依赖 GitHub）** | 双击 `scripts\start_net.bat` |
+| 每天自动更新数据并推 GitHub | 双击 `scripts\daily_update.bat`（见下文） |
+
+> 推荐用 `start_local.py` / `start_net.py` 而不是裸 `python -m http.server`：
+> 它们带 `no-store` 响应头，强制手机浏览器不缓存旧数据，刷新即所见即最新。
 
 ---
 
-## 四、部署与每日更新
+## 四、手机在外网查看（内网穿透，不依赖 GitHub）
+
+核心诉求：**数据在你家电脑上跑，手机走到哪都能看，不要 GitHub。**
+
+家里宽带一般没有固定公网 IP，所以本机起服务后，再借一个「内网穿透」把服务映射成公网地址。
+本仓库的 `scripts/start_net.py` 已经把"起服务 + 拉穿透 + 抓公网 URL + 出二维码"一条龙做好了：
+
+```bash
+python scripts/start_net.py              # 自动探测已装的穿透工具
+python scripts/start_net.py --tunnel cpolar   # 指定用 cpolar
+python scripts/start_net.py --update      # 先更新数据再起服务
+```
+
+启动后终端会打印形如 `https://xxxx.cpolar.cn` 的**公网地址**并弹出二维码，手机扫码即可。
+
+### 选一个穿透工具（三选一，免费）
+
+| 工具 | 上手 | 免费限制 |
+|---|---|---|
+| **cpolar**（最推荐） | 国产，微信扫码登录 | 随机域名（每天变）+ 限速；固定域名需付费 |
+| ngrok | 国际，注册拿 token | 随机域名（每次变） |
+| cloudflared | 零账号免登录 quick tunnel | 随机域名（每次变），最省事 |
+
+安装（装好其中之一即可，重跑 `start_net.py`）：
+
+```bat
+:: cpolar：官网 https://www.cpolar.com 下载 Windows 版 → 安装 → 微信扫码登录
+cpolar authtoken <你的token>     :: 在官网控制台拿
+cpolar http 8000                 :: 手动验证能出地址即可
+
+:: ngrok：官网 https://ngrok.com 注册 → 拿 authtoken
+ngrok config add-authtoken <token>
+
+:: cloudflared：下载 cloudflared-windows-amd64.exe 放到 PATH
+::    https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
+```
+
+### 几个要知道的点
+
+- **免费域名会变**：每次启动公网地址都可能不同，所以每次都扫终端新弹出的二维码最稳。
+  想要固定域名需穿透工具付费版（cpolar 的「固定 TCP/HTTP」为付费项）。
+- **电脑要一直开着、这个窗口别关**：外网才能持续访问。关掉窗口服务即停。
+- **数据要新鲜**：穿透只解决"在外网能打开页面"，数据本身还是 `update_local.py` 生成的。
+  每天收盘后跑一次 `daily_update.bat`（或 `start_net.py --update`）即可。
+- 想只在本机 / 同 WiFi 看，用 `start_local.py` 更轻（不依赖任何穿透工具）。
+
+---
+
+## 五、部署与每日更新（GitHub Pages，可选）
 
 ### 为什么不让 GitHub Actions 跑数据
 
@@ -220,7 +277,7 @@ schtasks /create /tn "LDX价值雷达-每日更新" /tr "\"C:\Users\seon\ldx-val
 
 ---
 
-## 五、目录结构
+## 六、目录结构
 
 ```
 ldx-value-radar/
@@ -234,8 +291,13 @@ ldx-value-radar/
 ├── scripts/
 │   ├── build_data.py             # 主数据构建
 │   ├── deep_analysis.py          # 八步财报深度分析（TOP 30）
-│   ├── update_and_push.py        # 每日更新：构建 → 校验 → 提交 → 推送
-│   └── daily_update.bat          # Windows 任务计划入口（薄封装）
+│   ├── update_local.py           # 本地更新：构建 → 校验（不碰 git / 不需要 PAT）
+│   ├── update_and_push.py        # 每日更新：构建 → 校验 → 提交 → 推送（GitHub 可选）
+│   ├── start_local.py            # 局域网服务（同 WiFi 看）
+│   ├── start_net.py              # 互联网服务（内网穿透，手机外网看，不依赖 GitHub）
+│   ├── start_local.bat           # Windows 双击入口：局域网
+│   ├── start_net.bat             # Windows 双击入口：互联网（穿透）
+│   └── daily_update.bat          # Windows 任务计划入口：每日更新并推送
 ├── logs/                         # 运行日志（按天滚动，保留 30 天，已 gitignore）
 ├── .github/workflows/
 │   └── daily.yml                 # 仅手动触发，作为本机的备份
@@ -244,7 +306,7 @@ ldx-value-radar/
 
 ---
 
-## 六、几个需要知道的点
+## 七、几个需要知道的点
 
 1. **和短线体系不要混用**。这是大周期底部区域的长线逆向布局工具，和 D 点、放量滞胀那套短线择时逻辑完全不同，两者混用会互相干扰。
 
