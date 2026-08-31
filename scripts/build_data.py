@@ -641,8 +641,25 @@ def percentile_score(s, higher_better=True):
     return s.rank(pct=True, ascending=higher_better) * 100
 
 
-def build_table(pool, quote, div_feat):
-    """合并数据 + 黑五类硬排除 + 四维打分"""
+def within_industry_pct(df, col, higher_better):
+    """
+    行业内百分位打分 0-100（瓦解"银行整组天然便宜→霸榜"）。
+    单只行业（组内仅 1 只）退回全池百分位，避免恒为满分。
+
+    higher_better=False 表示值越小越好（PE/PB）；True 表示越大越好（股息率/稳定性）。
+    """
+    pooled = df[col].rank(pct=True, ascending=higher_better) * 100
+    out = pd.Series(index=df.index, dtype=float)
+    for _ind, g in df.groupby("行业")[col]:
+        if len(g) >= 2:
+            out.loc[g.index] = g.rank(pct=True, ascending=higher_better) * 100
+        else:
+            out.loc[g.index] = pooled.loc[g.index]
+    return out
+
+
+def build_table(pool, quote, div_feat, industry_map=None):
+    """合并数据 + 黑五类硬排除 + 四维打分（行业内百分位）"""
     df = quote.copy()
     df.index.name = "代码"
 
@@ -656,6 +673,10 @@ def build_table(pool, quote, div_feat):
     if not pool.empty:
         name_map = dict(zip(pool["品种代码"], pool["品种名称"]))
         df["名称"] = [name_map.get(c, nm) for c, nm in zip(df.index, df["名称"])]
+
+    # 行业归属（用于行业内百分位打分；缺失则归入"未知"，退化为全池横比）
+    im = industry_map or {}
+    df["行业"] = [im.get(str(c).zfill(6), "未知") for c in df.index]
 
     total = len(df)
 
@@ -678,12 +699,12 @@ def build_table(pool, quote, div_feat):
     if passed.empty:
         return passed, {"total": total, "passed": 0, "reasons": reasons}
 
-    # —— 四维打分 ——
+    # —— 四维打分（行业内百分位：瓦解银行整组霸榜）——
     w = CONFIG["weights"]
-    passed["S_股息"] = percentile_score(passed["股息率"], True)
-    passed["S_PE"] = percentile_score(passed["PE"], False)      # PE 越低越好
-    passed["S_PB"] = percentile_score(passed["PB"], False)      # PB 越低越好（破净最优）
-    passed["S_稳定"] = percentile_score(passed["分红稳定性"], True)
+    passed["S_股息"] = within_industry_pct(passed, "股息率", True)
+    passed["S_PE"] = within_industry_pct(passed, "PE", False)      # PE 越低越好
+    passed["S_PB"] = within_industry_pct(passed, "PB", False)      # PB 越低越好（破净最优）
+    passed["S_稳定"] = within_industry_pct(passed, "分红稳定性", True)
     passed["总分"] = sum(
         passed[k] * v for k, v in zip(["S_股息", "S_PE", "S_PB", "S_稳定"],
                                       [w["dividend"], w["pe"], w["pb"], w["stability"]])
@@ -861,7 +882,16 @@ def main():
     div, ok_periods = fetch_dividend()
     div_feat = compute_dividend_features(div)
 
-    scored, filt = build_table(pool, quote, div_feat)
+    # ---- 行业映射（行业内百分位打分 + 财报体检豁免 + 八步深研共用，只拉一次，提前）----
+    try:
+        import deep_analysis as da
+        industry_map = da.fetch_industry_map()
+        log(f"行业映射 {len(industry_map)} 只")
+    except Exception as e:
+        log(f"  [WARN] 行业映射获取失败: {e}")
+        industry_map = {}
+
+    scored, filt = build_table(pool, quote, div_feat, industry_map)
     if scored.empty:
         log("[FATAL] 无股票通过筛选，终止")
         sys.exit(1)
@@ -872,15 +902,6 @@ def main():
     cap_per_stock = (capital or {}).pop("per_stock", {})
     timing = build_timing(mkt_val, scored, capital)
 
-    # ---- 行业映射（主表财报体检豁免 + 八步深研共用，只拉一次）----
-    try:
-        import deep_analysis as da
-        industry_map = da.fetch_industry_map()
-        log(f"行业映射 {len(industry_map)} 只")
-    except Exception as e:
-        log(f"  [WARN] 行业映射获取失败: {e}")
-        industry_map = {}
-
     # ---- 半年报体检（东方财富业绩报表，全市场一次返回）----
     rep_map, used_h1 = fetch_interim_report()
 
@@ -888,11 +909,16 @@ def main():
     deep = build_deep_analysis(scored, cap_per_stock, CONFIG["deep_top_n"], rep_map, industry_map)
 
     # —— 组装输出 ——
+    # 四维总分保持纯净（不掺财报判断）；排序分在其基础上对「财报利空」扣 10 分使其沉底，
+    # 四维权重不被污染，机器只降权、决策仍由人做。
+    REPORT_PENALTY = 10.0
     stocks = []
-    for rank, (code, r) in enumerate(scored.iterrows(), 1):
+    for code, r in scored.iterrows():
         assess = assess_interim(rep_map.get(code), industry_map.get(code, ""))
+        score_4d = round(float(r["总分"]), 1)
+        is_bad = assess.get("available") and assess.get("verdict") == "利空"
+        sort_score = round(score_4d - REPORT_PENALTY if is_bad else score_4d, 1)
         stocks.append({
-            "rank": rank,
             "代码": code,
             "名称": str(r.get("名称", "")),
             "价格": round(float(r["价格"]), 2),
@@ -904,7 +930,8 @@ def main():
             "连续分红年": int(r["连续分红年"]),
             "分红稳定性": round(float(r["分红稳定性"]), 1),
             "总市值亿": round(float(r["总市值亿"]), 1),
-            "总分": round(float(r["总分"]), 1),
+            "总分": score_4d,
+            "排序分": sort_score,
             "破净": bool(r["破净"]),
             "高股息": bool(r["高股息"]),
             "S_股息": round(float(r["S_股息"]), 1),
@@ -914,6 +941,11 @@ def main():
             "report": assess,
             "report_score": assess["score"],
         })
+
+    # 按排序分（已含利空降权）重排，生成最终 rank；四维总分不参与此排序
+    stocks.sort(key=lambda s: s["排序分"], reverse=True)
+    for i, s in enumerate(stocks, 1):
+        s["rank"] = i
 
     result = {
         "meta": {

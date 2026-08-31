@@ -7,7 +7,7 @@ const fmt = (v, d = 2) => (v === null || v === undefined || isNaN(v)) ? '--' : N
 
 let ALL = [];
 let VIEW = [];
-let sortKey = '总分';
+let sortKey = '排序分';
 let sortAsc = false;
 let filter = 'all';
 const openSet = new Set();
