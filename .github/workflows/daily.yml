@@ -1,12 +1,11 @@
 name: 每日更新蓝筹价值数据
 
 on:
-  schedule:
-    # 北京时间 18:00（收盘后）自动跑；GitHub cron 使用 UTC，18:00 CST = 10:00 UTC
-    - cron: '0 10 * * 1-5'
-  workflow_dispatch:      # 允许手动触发
-# 刻意不监听 push：改代码时无需重跑约 100 秒的数据抓取，省 Actions 额度。
-# 需要刷新数据时，到 Actions 页面手动 Run workflow。
+  workflow_dispatch:      # 仅手动触发，作为本地任务计划失效时的备份
+# 刻意不再监听 schedule：GitHub Actions 的 cron 不保证触发，官方明确说明
+# 负载高峰期会延迟甚至丢弃事件。本仓库实测 13 次运行记录中 schedule 触发 0 次。
+# 数据更新已改由本地 Windows 任务计划执行 —— 见 scripts/daily_update.bat。
+# 同样不监听 push：改代码时无需重跑约 150 秒的数据抓取，省 Actions 额度。
 
 permissions:
   contents: write

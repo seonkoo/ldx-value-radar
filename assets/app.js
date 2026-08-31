@@ -365,6 +365,36 @@ function renderDeep(deep) {
     });
 }
 
+/* ---------------- 数据新鲜度自检 ---------------- */
+/* 数据改由本地 Windows 任务计划生成后，不像 CI 那样有运行记录可查。
+   一旦任务没跑，页面会安静地展示旧数据 —— 所以必须先自检再报警。
+   注意避开周末误报：A 股周末不更新是正常现象。 */
+function renderFreshness(ts) {
+    const bar = $('#freshBar');
+    if (!ts || !bar) return;
+    const t = new Date(String(ts).replace(' ', 'T'));
+    if (isNaN(t.getTime())) return;
+
+    const now = new Date();
+    const days = Math.floor((now - t) / 86400000);
+    const dow = now.getDay();                       // 0=周日 6=周六
+    const isWeekday = dow >= 1 && dow <= 5;
+    const isAfterClose = now.getHours() >= 16;      // 收盘后理应已更新
+    const sameDay = t.toDateString() === now.toDateString();
+
+    let cls = null, msg = '';
+    // 顺序有讲究：多日未更新比「今日还没跑」严重，必须先判
+    if (days >= 5) {
+        cls = 'fresh-bad';
+        msg = `数据已过期 ${days} 天（${ts}），定时任务似乎已停止。请检查 Windows 任务计划程序。`;
+    } else if (isWeekday && isAfterClose && !sameDay) {
+        cls = 'fresh-warn';
+        msg = `今日为交易日且已收盘，但数据仍停留在 ${ts}。`
+            + '请检查本地任务计划是否执行，或手动运行 scripts\\daily_update.bat。';
+    }
+    bar.innerHTML = cls ? `<div class="fresh-bar ${cls}">⚠️ ${esc(msg)}</div>` : '';
+}
+
 /* ---------------- 元信息 ---------------- */
 function renderMeta(m) {
     $('#metaRow').innerHTML = `
@@ -385,6 +415,7 @@ async function boot() {
         const d = await res.json();
         ALL = d.stocks || [];
         renderMeta(d.meta);
+        renderFreshness(d.meta.generated_at);
         renderGauge(d.timing.valuation);
         renderTiming(d.timing);
         applyView();

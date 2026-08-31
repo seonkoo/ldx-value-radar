@@ -125,7 +125,26 @@ Windows 下同样适用（PowerShell / CMD 均可）。
 
 ---
 
-## 四、部署到 GitHub Pages（每日自动更新）
+## 四、部署与每日更新
+
+### 为什么不让 GitHub Actions 跑数据
+
+最初是用 Actions 的 `schedule` 定时跑的，但它**不可靠**：GitHub 官方明确说明
+schedule 在负载高峰期会被延迟甚至丢弃，且不保证触发。
+
+实测证据 —— 本仓库前 13 次运行记录：
+
+| 触发方式 | 次数 |
+|---|---|
+| `workflow_dispatch`（手动） | 3 |
+| `push` | 2 |
+| `dynamic`（Pages 部署） | 8 |
+| **`schedule`（定时）** | **0** |
+
+cron 一次都没生效过。所以改为：**数据在你本机生成，GitHub Pages 只做静态托管**，
+不跑任何计算。这样延迟归零，日志在眼前，出错立刻知道。
+
+代价是电脑要开着 —— 但交易日收盘后你本来就在盯盘，问题不大。
 
 ### 1. 建仓库并推送
 
@@ -145,22 +164,59 @@ git push -u origin main
 - Source 选 **Deploy from a branch**
 - Branch 选 **main** / 根目录 `/`
 
-### 3. 每日自动更新
+### 3. 配置推送凭据（只需做一次）
 
-`.github/workflows/daily.yml` 已配置：
+在 CMD 里执行，**PAT 不会落盘到任何脚本文件**：
 
-- **工作日 18:00（北京时间）**自动执行（cron 用 UTC，写作 `0 10 * * 1-5`）
-- 跑完校验数据条目 ≥ 50，异常则拒绝提交
-- 数据有变化才 commit，无变化跳过
-- 同时上传 artifact 备份，保留 7 天
+```bat
+cmdkey /generic:git:https://github.com /user:<你的GitHub用户名> /pass:<你的PAT>
+```
 
-也可在 Actions 页面点 **Run workflow** 手动触发。
+PAT 需要有 `repo` 权限。⚠️ 注意 PAT 有有效期，到期后重跑一次这条命令即可。
 
-> **刻意没有监听 `push` 事件**：改代码时不需要重跑约 100 秒的数据抓取，省 Actions 额度。
-> 想刷新数据时手动 Run workflow 即可。
+### 4. 建 Windows 任务计划
 
-Actions 需要仓库有写权限（首次部署后检查一次）：
-**Settings → Actions → General → Workflow permissions → Read and write permissions**
+最快的方式（一行，管理员或非管理员均可）：
+
+```bat
+schtasks /create /tn "LDX价值雷达-每日更新" /tr "\"C:\Users\seon\ldx-value-radar\scripts\daily_update.bat\"" /sc daily /st 15:30 /f
+```
+
+> 把路径换成你实际的项目位置。`/st 15:30` 是收盘后半小时，可按需改。
+
+也可以用图形界面：**Win 键 → 任务计划程序 → 创建基本任务**
+- 触发器：每天 15:30
+- 操作：启动程序 → `C:\Users\seon\ldx-value-radar\scripts\daily_update.bat`
+- 勾选「不管用户是否登录都要运行」，这样锁屏也能跑
+
+任务跑完会输出日志到 `logs/daily_YYYYMMDD.log`（保留 30 天）。
+
+### 5. 它做了什么
+
+`scripts/daily_update.bat` 只是个薄封装（探测 Python 后调用 Python），逻辑全在
+`scripts/update_and_push.py`：
+
+1. 构建数据（`build_data.py`，约 150 秒）
+2. 校验产物：条目 < 50 判定抓取异常，**拒绝推送**
+3. `git commit`
+4. `git push`
+
+任一环节失败立即中止，绝不推送残缺数据。
+
+### 6. 数据没更新时页面会自己报警
+
+页面顶部有新鲜度自检：
+
+| 情况 | 表现 |
+|---|---|
+| 交易日收盘后数据仍不是今天的 | 黄条提示检查任务计划 |
+| 数据超过 5 天 | 红条提示定时任务可能已停 |
+| 周末 | 静默（周末不更新是正常现象，不误报） |
+
+### 7. Actions 仍保留手动触发
+
+`.github/workflows/daily.yml` 只留了 `workflow_dispatch`，
+作为本机任务计划失效时的备份（比如出差）。到 Actions 页面点 **Run workflow** 即可。
 
 ---
 
@@ -171,14 +227,18 @@ ldx-value-radar/
 ├── index.html                    # 主页面
 ├── assets/
 │   ├── style.css                 # 样式（含移动端适配 + 八步深分析样式）
-│   └── app.js                    # 渲染 / 筛选 / 排序 / 展开 / 八步拆解
+│   └── app.js                    # 渲染 / 筛选 / 排序 / 展开 / 八步拆解 / 新鲜度自检
 ├── data/
-│   └── data.json                 # 每日生成的数据（CI 自动提交）
+│   ├── data.json                 # 每日生成的数据
+│   └── valuation_cache.json      # 大盘估值历史缓存（乐咕挂掉时的降级依据）
 ├── scripts/
 │   ├── build_data.py             # 主数据构建
-│   └── deep_analysis.py          # 八步财报深度分析（TOP 30）
+│   ├── deep_analysis.py          # 八步财报深度分析（TOP 30）
+│   ├── update_and_push.py        # 每日更新：构建 → 校验 → 提交 → 推送
+│   └── daily_update.bat          # Windows 任务计划入口（薄封装）
+├── logs/                         # 运行日志（按天滚动，保留 30 天，已 gitignore）
 ├── .github/workflows/
-│   └── daily.yml                 # 每日定时任务
+│   └── daily.yml                 # 仅手动触发，作为本机的备份
 └── README.md
 ```
 

@@ -72,6 +72,11 @@ body {
     text-align: center;
 }
 
+/* ---------------- 数据新鲜度提示 ---------------- */
+.fresh-bar { font-size: 12.5px; padding: 9px 0; text-align: center; line-height: 1.6; }
+.fresh-warn { background: #fff8e6; border-bottom: 1px solid #f0e2b8; color: #8a6d1f; }
+.fresh-bad  { background: #fdeeed; border-bottom: 1px solid #f5cfcc; color: var(--hot); }
+
 /* ---------------- 卡片 ---------------- */
 .card {
     background: var(--card);
