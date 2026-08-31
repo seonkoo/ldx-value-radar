@@ -1,11 +1,13 @@
 name: 每日更新蓝筹价值数据
 
 on:
-  workflow_dispatch:      # 仅手动触发，作为本地任务计划失效时的备份
-# 刻意不再监听 schedule：GitHub Actions 的 cron 不保证触发，官方明确说明
-# 负载高峰期会延迟甚至丢弃事件。本仓库实测 13 次运行记录中 schedule 触发 0 次。
-# 数据更新已改由本地 Windows 任务计划执行 —— 见 scripts/daily_update.bat。
-# 同样不监听 push：改代码时无需重跑约 150 秒的数据抓取，省 Actions 额度。
+  schedule:
+    # 服务端「试着」自动跑：GitHub Actions 的 cron 官方不保证触发（实测 13 次 0 触发），
+    # 所以这只作双保险 / 备份，主力仍是本地 Windows 任务计划（见 scripts/daily_update.bat）。
+    # 08:30 UTC = 16:30 北京时间，仅工作日；晚于本地 15:30 任务，降低两地同时推送冲突。
+    - cron: "30 8 * * 1-5"
+  workflow_dispatch:      # 手动触发，本地任务 / 定时都失效时的兜底
+# 不监听 push：改代码时无需重跑约 150 秒的数据抓取，省 Actions 额度。
 
 permissions:
   contents: write
@@ -63,6 +65,8 @@ jobs:
             echo "数据无变化，跳过提交"
           else
             git commit -m "chore(data): 更新蓝筹价值数据 $(date +'%Y-%m-%d')"
+            # 若本地任务已先推了新提交，先 rebase 再推，避免定时任务撞上非快进而跑红
+            git pull --rebase origin main || true
             git push
           fi
 
