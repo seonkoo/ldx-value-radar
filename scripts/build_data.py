@@ -456,6 +456,185 @@ def fetch_capital_action(pool_codes):
     return out
 
 
+# ============================================================ 5.5 半年报体检
+def _num_or_none(v):
+    try:
+        if v is None or v == "":
+            return None
+        f = float(v)
+        return None if pd.isna(f) else f
+    except (TypeError, ValueError):
+        return None
+
+
+def fetch_interim_report():
+    """
+    拉取最新业绩报表（东方财富），构建每只在池股票的「财报体检」基础数据。
+    优先 2026 半年报(20260630)；尚未披露的公司回退到 2026 Q1(20260331) / 2025 年报(20251231)，
+    每只按实际取到的周期打标签，完全没取到的标为 available=False。
+    该接口一次返回全市场，故 184 只蓝筹均摊到约 1 次请求，成本极低。
+    """
+    log("拉取半年报业绩（东方财富业绩报表）...")
+    CANDIDATES = ["20260630", "20260331", "20251231"]   # 半年报 → 一季报 → 上一年年报
+    period_dfs = {}
+    used_h1 = False
+    for p in CANDIDATES:
+        try:
+            df = ak.stock_yjbb_em(date=p)
+        except Exception as e:
+            log(f"  [WARN] 业绩报表 {p} 获取失败: {e}")
+            df = None
+        if df is None or df.empty:
+            continue
+        if p == "20260630":
+            used_h1 = True
+        period_dfs[p] = df
+        log(f"  业绩报表 {p}: {len(df)} 条")
+
+    if not period_dfs:
+        log("  [WARN] 业绩报表全部获取失败，财报体检降级为「未出」")
+        return {}, False
+
+    rep_map = {}
+    # 按优先级填充：H1 > Q1 > 年报（已取到更优先周期的不再覆盖）
+    for p in CANDIDATES:
+        df = period_dfs.get(p)
+        if df is None:
+            continue
+        for _, r in df.iterrows():
+            code = str(r.get("股票代码")).zfill(6)
+            if code in rep_map:
+                continue
+            rev = _num_or_none(r.get("营业总收入-营业总收入"))
+            rev_yoy = _num_or_none(r.get("营业总收入-同比增长"))
+            npf = _num_or_none(r.get("净利润-净利润"))
+            np_yoy = _num_or_none(r.get("净利润-同比增长"))
+            rep_map[code] = {
+                "period": p,
+                "营收_亿": round(rev / 1e8, 1) if rev is not None else None,
+                "营收同比": round(rev_yoy, 2) if rev_yoy is not None else None,
+                "净利_亿": round(npf / 1e8, 1) if npf is not None else None,
+                "净利同比": round(np_yoy, 2) if np_yoy is not None else None,
+                "EPS": _num_or_none(r.get("每股收益")),
+                "ROE": _num_or_none(r.get("净资产收益率")),
+                "毛利率": _num_or_none(r.get("销售毛利率")),
+                "每股经营现金流": _num_or_none(r.get("每股经营现金流量")),
+                "行业": str(r.get("所处行业") or "未知"),
+            }
+    log(f"  财报体检覆盖 {len(rep_map)} 只（含回退周期）")
+    return rep_map, used_h1
+
+
+def _period_label(p):
+    if p == "20260630":
+        return "2026 半年报"
+    if p == "20260331":
+        return "2026 一季报(回退)"
+    if p == "20251231":
+        return "2025 年报(回退)"
+    if p and p.endswith("1231"):
+        return f"{p[:4]} 年报"
+    return p or ""
+
+
+def assess_interim(rep, industry):
+    """
+    对单只股票的业绩报表做利好/利空体检。
+    返回 {available, verdict, score, period, period_label, metrics, highlights, risks}。
+    verdict ∈ 利好 / 中性 / 利空；available=False 时 verdict='未出'。
+    """
+    if not rep:
+        return {"available": False, "verdict": "未出", "score": 0, "period": None,
+                "period_label": "", "metrics": {}, "highlights": [], "risks": []}
+
+    from deep_analysis import is_exempt   # 金融业豁免毛利率/现金流口径
+
+    rev_yoy = rep.get("营收同比")
+    np_yoy = rep.get("净利同比")
+    roe = rep.get("ROE")
+    gm = rep.get("毛利率")
+    ocf = rep.get("每股经营现金流")
+
+    score = 0
+    highlights, risks = [], []
+
+    # —— 净利润同比（核心）——
+    if np_yoy is not None:
+        if np_yoy >= 20:
+            score += 2; highlights.append(f"净利润同比 +{np_yoy:.1f}%，高速增长")
+        elif np_yoy >= 10:
+            score += 1; highlights.append(f"净利润同比 +{np_yoy:.1f}%，稳健增长")
+        elif np_yoy >= 0:
+            highlights.append(f"净利润同比 +{np_yoy:.1f}%，微增")
+        elif np_yoy >= -10:
+            score -= 1; risks.append(f"净利润同比 {np_yoy:.1f}%，业绩承压")
+        else:
+            score -= 2; risks.append(f"净利润同比 {np_yoy:.1f}%，明显下滑")
+
+    # —— 营收 vs 净利：增收不增利 / 利润率扩张 ——
+    if rev_yoy is not None and np_yoy is not None:
+        if rev_yoy > 0 and np_yoy < 0:
+            risks.append(f"增收不增利：营收 +{rev_yoy:.1f}% 但净利 {np_yoy:.1f}%，成本/价格承压")
+            score -= 1
+        elif np_yoy - rev_yoy >= 5:
+            highlights.append("净利增速快于营收，利润率扩张")
+            score += 1
+
+    # —— 营收同比 ——
+    if rev_yoy is not None:
+        if rev_yoy >= 10:
+            score += 1
+        elif rev_yoy < 0:
+            score -= 1
+
+    # —— ROE ——
+    if roe is not None:
+        if roe >= 15:
+            score += 1; highlights.append(f"ROE {roe:.1f}%，盈利质量高")
+        elif roe < 0:
+            score -= 2; risks.append("ROE 为负，本期亏损")
+
+    # —— 毛利率（金融业豁免）——
+    if gm is not None and not is_exempt("毛利率", industry):
+        if gm >= 40:
+            score += 1; highlights.append(f"毛利率 {gm:.1f}% 维持高位")
+        elif gm < 15:
+            score -= 1; risks.append(f"毛利率仅 {gm:.1f}%，偏低")
+
+    # —— 每股经营现金流（金融业豁免）——
+    if ocf is not None and not is_exempt("现金流质量", industry):
+        if ocf < 0:
+            risks.append("每股经营现金流为负，回款/盈利质量存疑")
+            score -= 1
+
+    if score >= 1:
+        verdict = "利好"
+    elif score <= -1:
+        verdict = "利空"
+    else:
+        verdict = "中性"
+
+    return {
+        "available": True,
+        "verdict": verdict,
+        "score": score,
+        "period": rep.get("period"),
+        "period_label": _period_label(rep.get("period")),
+        "metrics": {
+            "营收_亿": rep.get("营收_亿"),
+            "营收同比": rev_yoy,
+            "净利_亿": rep.get("净利_亿"),
+            "净利同比": np_yoy,
+            "EPS": rep.get("EPS"),
+            "ROE": roe,
+            "毛利率": gm,
+            "每股经营现金流": ocf,
+        },
+        "highlights": highlights,
+        "risks": risks,
+    }
+
+
 # ============================================================ 6. 打分
 def percentile_score(s, higher_better=True):
     """分位排名打分 0-100。higher_better=False 表示值越小越好"""
@@ -571,11 +750,12 @@ def build_timing(mkt_val, passed, capital):
 
 
 # ============================================================ 7. 八步深度分析
-def build_deep_analysis(scored, cap_map, top_n):
+def build_deep_analysis(scored, cap_map, top_n, rep_map=None, industry_map=None):
     """
     对排名前 top_n 的标的执行「八步财报分析法」。
     只对头部标的做，是因为每只需要 3 次请求（财务 + PE + PB），
     全量 185 只跑下来要十几分钟，且不符合「只深研值得研究的」这一原则。
+    rep_map / industry_map 由 main 统一拉取后传入，避免重复请求。
     """
     log(f"八步财报深度分析：对 TOP {top_n} 执行...")
     try:
@@ -586,15 +766,17 @@ def build_deep_analysis(scored, cap_map, top_n):
         return {"available": False, "items": [], "top_n": top_n}
 
     top = scored.head(top_n)
-    try:
-        industry_map = da.fetch_industry_map()
-        log(f"  行业映射 {len(industry_map)} 只")
-    except Exception as e:
-        log(f"  [WARN] 行业映射获取失败: {e}")
-        industry_map = {}
+    if industry_map is None:
+        try:
+            industry_map = da.fetch_industry_map()
+            log(f"  行业映射 {len(industry_map)} 只")
+        except Exception as e:
+            log(f"  [WARN] 行业映射获取失败: {e}")
+            industry_map = {}
 
     def analyze(row):
         code, r = row
+        raw_rep = (rep_map or {}).get(code)
         stock = {
             "代码": code, "名称": str(r.get("名称", "")),
             "价格": float(r["价格"]), "PE": float(r["PE"]), "PB": float(r["PB"]),
@@ -609,8 +791,9 @@ def build_deep_analysis(scored, cap_map, top_n):
             val = da.fetch_self_valuation(code)
         except Exception:
             val = {}
+        rep_assessed = assess_interim(raw_rep, industry_map.get(code, ""))
         try:
-            steps = da.evaluate_steps(fin, val, stock, industry_map.get(code, "未知"), cap_map)
+            steps = da.evaluate_steps(fin, val, stock, industry_map.get(code, "未知"), cap_map, rep_assessed)
         except Exception as e:
             steps = []
             log(f"  [WARN] {code} 八步评估失败: {e}")
@@ -638,6 +821,7 @@ def build_deep_analysis(scored, cap_map, top_n):
             "股息率": stock["股息率"],
             "达标项": ok_n, "关注项": warn_n, "风险数": len(risks),
             "风险摘要": risks,
+            "report": rep_assessed,
             "steps": steps,
         }
 
@@ -688,12 +872,25 @@ def main():
     cap_per_stock = (capital or {}).pop("per_stock", {})
     timing = build_timing(mkt_val, scored, capital)
 
+    # ---- 行业映射（主表财报体检豁免 + 八步深研共用，只拉一次）----
+    try:
+        import deep_analysis as da
+        industry_map = da.fetch_industry_map()
+        log(f"行业映射 {len(industry_map)} 只")
+    except Exception as e:
+        log(f"  [WARN] 行业映射获取失败: {e}")
+        industry_map = {}
+
+    # ---- 半年报体检（东方财富业绩报表，全市场一次返回）----
+    rep_map, used_h1 = fetch_interim_report()
+
     # ---- 八步财报深度分析：仅对排名靠前的标的做，控制请求量与耗时 ----
-    deep = build_deep_analysis(scored, cap_per_stock, CONFIG["deep_top_n"])
+    deep = build_deep_analysis(scored, cap_per_stock, CONFIG["deep_top_n"], rep_map, industry_map)
 
     # —— 组装输出 ——
     stocks = []
     for rank, (code, r) in enumerate(scored.iterrows(), 1):
+        assess = assess_interim(rep_map.get(code), industry_map.get(code, ""))
         stocks.append({
             "rank": rank,
             "代码": code,
@@ -714,6 +911,8 @@ def main():
             "S_PE": round(float(r["S_PE"]), 1),
             "S_PB": round(float(r["S_PB"]), 1),
             "S_稳定": round(float(r["S_稳定"]), 1),
+            "report": assess,
+            "report_score": assess["score"],
         })
 
     result = {
@@ -732,6 +931,12 @@ def main():
                 "min_dividend_years": CONFIG["min_dividend_years"],
             },
             "deep_top_n": CONFIG["deep_top_n"],
+            "report_period": "20260630" if used_h1 else "回退",
+            "report_note": (
+                "2026 半年报(2026-06-30) 正在披露；已出个股按半年报体检，未出个股标注「未出」"
+                if used_h1 else
+                "2026 半年报暂未取到，财报体检回退至最近一期或标注「未出」"
+            ),
             "sources": {
                 "蓝筹池": "中证指数(沪深300成分股)",
                 "行情估值": "腾讯行情 PE(TTM)/PB/总市值（已与百度估值交叉校验）",
@@ -745,6 +950,7 @@ def main():
                 "三张报表": "新浪财经 财务摘要（80 指标，年报口径取结构项、最新期取增速项）",
                 "个股历史估值": "百度股市通 近三年 PE/PB",
                 "行业归属": "新浪财经 行业板块（证监会行业分类）",
+                "半年报业绩": "东方财富 业绩报表（营收/净利同比、ROE、毛利率、经营现金流）",
             },
             "cost_sec": round(time.time() - t0, 1),
         },

@@ -25,6 +25,14 @@ function esc(s) {
     return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
 
+/* ---------------- 财报体检徽章 ---------------- */
+function reportBadge(rep) {
+    if (!rep || !rep.available) return '<span class="tag tag-rep-none">未出</span>';
+    const v = rep.verdict;
+    const cls = v === '利好' ? 'tag-rep-up' : (v === '利空' ? 'tag-rep-down' : 'tag-rep-neutral');
+    return `<span class="tag ${cls}">${esc(v)}</span>`;
+}
+
 /* ---------------- 温度计 ---------------- */
 function renderGauge(v) {
     if (!v || !v.available) {
@@ -122,6 +130,8 @@ function applyView() {
     else if (filter === 'div') rows = rows.filter(r => r.股息率 >= 5);
     else if (filter === 'bank') rows = rows.filter(r => /银行|保险|证券/.test(r.名称));
     else if (filter === 'central') rows = rows.filter(r => /^中国|中油|中煤|中远|中海/.test(r.名称));
+    else if (filter === 'rep-up') rows = rows.filter(r => r.report && r.report.available && r.report.verdict === '利好');
+    else if (filter === 'rep-down') rows = rows.filter(r => r.report && r.report.available && r.report.verdict === '利空');
 
     rows.sort((a, b) => {
         const x = a[sortKey], y = b[sortKey];
@@ -139,7 +149,7 @@ function renderTable() {
     let html = `<div class="tbl-scroll"><table><thead><tr>
         ${[['rank', '#'], ['名称', '名称'], ['价格', '现价'], ['涨跌幅', '涨跌'], ['PE', 'PE'],
     ['PB', 'PB'], ['股息率', '股息率'], ['连续分红年', '连分年'],
-    ['总市值亿', '总市值(亿)'], ['总分', '评分']]
+    ['总市值亿', '总市值(亿)'], ['总分', '评分'], ['report_score', '财报']]
         .map(([k, t]) => {
             const on = sortKey === k ? ` sorted${sortAsc ? ' asc' : ''}` : '';
             const al = ['rank', '名称'].includes(k) ? ' style="text-align:left"' : '';
@@ -164,6 +174,7 @@ function renderTable() {
             <td>${fmt(r.总市值亿, 0)}</td>
             <td><span class="score-cell">${fmt(r.总分, 1)}</span>
                 <span class="score-bar"><i style="width:${r.总分}%"></i></span></td>
+            <td>${reportBadge(r.report)}</td>
         </tr>`;
         if (open) html += detailRow(r);
     });
@@ -198,7 +209,7 @@ function detailRow(r) {
             <div class="bv">${fmt(v, 0)}</div>
         </div>`).join('');
 
-    return `<tr class="detail"><td colspan="10"><div class="detail-inner">
+    return `<tr class="detail"><td colspan="11"><div class="detail-inner">
         <div class="dgrid">
             <div class="ditem"><div class="dk">近12月每股派息</div><div class="dv2">${fmt(r.每股派息, 4)} 元</div></div>
             <div class="ditem"><div class="dk">股息率口径</div><div class="dv2">${fmt(r.股息率)}%</div></div>
@@ -209,13 +220,15 @@ function detailRow(r) {
             <div class="ditem"><div class="dk">总市值</div><div class="dv2">${fmt(r.总市值亿, 0)} 亿</div></div>
             <div class="ditem"><div class="dk">综合评分</div><div class="dv2" style="color:var(--navy)">${fmt(r.总分, 1)}</div></div>
         </div>
+        ${renderReportDetail(r.report)}
         <div class="bars">
             <div style="font-size:12px;color:var(--ink-3);margin-bottom:8px">四维分位得分（0-100，越高越优）</div>
             ${barHtml}
         </div>
         <div class="dnote">
             股息率 = 近 12 个月内已完成除权的每股派息合计 ÷ 当前股价，含中期分红、剔除未实施预案。<br>
-            分位得分为该股在通过筛选的 ${ALL.length} 只蓝筹中的相对排名，非绝对估值判断。
+            分位得分为该股在通过筛选的 ${ALL.length} 只蓝筹中的相对排名，非绝对估值判断。<br>
+            财报体检基于东方财富业绩报表（营收/净利同比、ROE、毛利率），为规则引擎客观测算，仅供辅助研判。
         </div>
     </div></td></tr>`;
 }
@@ -325,6 +338,57 @@ function renderStep(s) {
     </div>`;
 }
 
+/* ---------------- 财报体检面板 ---------------- */
+function _repMetric(label, v, unit = '%') {
+    const txt = (v === null || v === undefined || isNaN(v)) ? '--'
+        : (unit === '%' ? Number(v).toFixed(1) + '%' : Number(v).toFixed(2));
+    return `<span class="rm"><i>${esc(label)}</i><b>${txt}</b></span>`;
+}
+
+function renderReportDetail(rep) {
+    if (!rep) return '';
+    if (!rep.available) {
+        return `<div class="rep-detail rep-detail-none">
+            <div class="rep-h">半年报体检 <span class="tag tag-rep-none">未出</span></div>
+            <div class="rep-note">本期财报尚未披露，暂无法体检（半年报正陆续发布中）</div>
+        </div>`;
+    }
+    const mt = rep.metrics || {};
+    return `<div class="rep-detail">
+        <div class="rep-h">半年报体检 ${reportBadge(rep)} <span class="rep-period">${esc(rep.period_label || '')}</span></div>
+        <div class="rep-metrics">
+            ${_repMetric('营收同比', mt.营收同比)}
+            ${_repMetric('净利同比', mt.净利同比)}
+            ${_repMetric('ROE', mt.ROE)}
+            ${_repMetric('毛利率', mt.毛利率)}
+            ${_repMetric('EPS', mt.EPS, '')}
+        </div>
+        ${rep.highlights && rep.highlights.length ? `<div class="rep-hl"><b>利好点</b> ${rep.highlights.map(x => `<span>${esc(x)}</span>`).join('')}</div>` : ''}
+        ${rep.risks && rep.risks.length ? `<div class="rep-rk"><b>风险点</b> ${rep.risks.map(x => `<span>${esc(x)}</span>`).join('')}</div>` : ''}
+    </div>`;
+}
+
+function renderReportPanel(rep) {
+    if (!rep) return '';
+    const head = `<div class="rep-panel-head">${reportBadge(rep)} ${rep.available && rep.period_label ? `<span class="rep-period">${esc(rep.period_label)}</span>` : ''}</div>`;
+    if (!rep.available) {
+        return `<div class="rep-panel rep-panel-none">${head}<div class="rep-note">本期财报尚未披露，暂无法体检</div></div>`;
+    }
+    const mt = rep.metrics || {};
+    let h = `<div class="rep-panel">${head}`;
+    h += `<div class="rep-metrics">
+        ${_repMetric('营收同比', mt.营收同比)}
+        ${_repMetric('净利同比', mt.净利同比)}
+        ${_repMetric('ROE', mt.ROE)}
+        ${_repMetric('毛利率', mt.毛利率)}
+        ${_repMetric('EPS', mt.EPS, '')}
+    </div>`;
+    if (rep.highlights && rep.highlights.length) h += `<div class="rep-hl"><b>利好点</b> ${rep.highlights.map(x => `<span>${esc(x)}</span>`).join('')}</div>`;
+    if (rep.risks && rep.risks.length) h += `<div class="rep-rk"><b>风险点</b> ${rep.risks.map(x => `<span>${esc(x)}</span>`).join('')}</div>`;
+    h += '</div>';
+    return h;
+}
+
 function renderDeep(deep) {
     const box = $('#deepBox');
     if (!deep || !deep.available || !deep.items || !deep.items.length) {
@@ -353,6 +417,7 @@ function renderDeep(deep) {
                 <span class="deep-arrow">▶</span>
             </div>
             <div class="deep-body">
+                ${renderReportPanel(it.report)}
                 ${(it.steps || []).map(renderStep).join('')}
             </div>
         </div>`;

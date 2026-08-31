@@ -43,6 +43,7 @@ EXEMPT_INDICATORS = {
     "资产负债率": FINANCIAL_INDUSTRIES,   # 金融业高杠杆属正常经营
     "现金流质量": FINANCIAL_INDUSTRIES,   # 银行/保险经营现金流口径不可比
     "商誉占净资产": FINANCIAL_INDUSTRIES,  # 金融业商誉项目含义不同
+    "毛利率": FINANCIAL_INDUSTRIES,       # 银行/保险无销售毛利率概念，口径不可比
 }
 
 
@@ -219,7 +220,7 @@ def fetch_industry_map(max_workers=8):
 
 
 # ------------------------------------------------------------------ 八步评估
-def evaluate_steps(fin, val, stock, industry, capital_map):
+def evaluate_steps(fin, val, stock, industry, capital_map, report=None):
     """
     综合八步，输出每步的量化结果 + 定性检查清单。
     fin: 财务指标  val: 自身历史估值  stock: 主表行  industry: 行业名
@@ -365,6 +366,13 @@ def evaluate_steps(fin, val, stock, industry, capital_map):
             risks.append(f"扣非占比仅 {fin['扣非占比']*100:.0f}%，利润含较多非经常性损益")
     if cap.get("减持次数", 0) > cap.get("增持次数", 0) * 2 and cap.get("减持次数", 0) >= 5:
         risks.append(f"大股东减持 {cap['减持次数']} 次，远多于增持")
+    # 半年报体检结论（由 build_data.assess_interim 传入）：利空则并入风险清单
+    if report and report.get("verdict") == "利空":
+        np_yoy = (report.get("metrics") or {}).get("净利同比")
+        if isinstance(np_yoy, (int, float)):
+            risks.append(f"半年报体检解读为利空（净利同比 {np_yoy:.1f}%）")
+        else:
+            risks.append("半年报体检解读为利空")
     steps.append({
         "no": 6, "title": "驱动因素与风险", "type": "mixed",
         "risks": risks or ["未触发量化风险阈值"],

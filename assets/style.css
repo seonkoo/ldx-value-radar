@@ -211,6 +211,44 @@ tbody tr.open { background: #eef6fc; }
 }
 .tag.pb { background: #e8f1fa; color: #1d6fa5; }
 .tag.dv { background: #fdf0e0; color: #b9762a; }
+/* 财报体检徽章 */
+.tag-rep-up      { background: #e8f6ef; color: #157a52; }
+.tag-rep-down    { background: #fdeceb; color: #d23b32; }
+.tag-rep-neutral { background: #eef1f5; color: #5b6776; }
+.tag-rep-none    { background: #f1f5f9; color: #95a3b3; }
+
+/* ---------------- 半年报体检 ---------------- */
+.rep-detail, .rep-panel {
+    margin: 12px 0; padding: 12px 14px; background: #fff;
+    border: 1px solid var(--line); border-radius: 10px;
+}
+.rep-panel-none, .rep-detail-none { background: #fbfcfe; border-style: dashed; }
+.rep-h, .rep-panel-head {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    font-weight: 600; font-size: 13px; margin-bottom: 8px;
+}
+.rep-h { margin-bottom: 8px; }
+.rep-period { font-size: 11px; font-weight: 500; color: var(--ink-3); }
+.rep-note { font-size: 12px; color: var(--ink-3); line-height: 1.6; }
+.rep-metrics { display: flex; flex-wrap: wrap; gap: 8px; }
+.rep-metrics .rm {
+    display: flex; flex-direction: column; align-items: center;
+    min-width: 64px; padding: 6px 10px; background: #f7f9fc;
+    border: 1px solid var(--line); border-radius: 8px;
+}
+.rep-metrics .rm i { font-size: 11px; color: var(--ink-3); font-style: normal; }
+.rep-metrics .rm b { font-size: 15px; font-weight: 700; margin-top: 2px; color: var(--ink); }
+.rep-hl, .rep-rk {
+    margin-top: 10px; font-size: 12px; line-height: 1.7;
+    padding: 8px 10px; border-radius: 8px;
+}
+.rep-hl { background: #eef9f2; color: #176b48; }
+.rep-rk { background: #fdf1f0; color: #b23a2f; }
+.rep-hl b, .rep-rk b { margin-right: 4px; }
+.rep-hl span, .rep-rk span {
+    display: inline-block; margin: 2px 6px 2px 0; padding: 1px 7px;
+    background: rgba(255,255,255,.7); border-radius: 5px;
+}
 
 /* ---------------- 展开详情 ---------------- */
 .detail td { background: #fbfcfe; padding: 0; }
