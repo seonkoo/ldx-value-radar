@@ -72,6 +72,11 @@ CONFIG = {
         "pb": 25,         # 低 PB / 破净
         "stability": 15,  # 分红稳定性：体现"业绩稳定"
     },
+    # —— 分位基准：行业内百分位 与 全池百分位 的混合比例 ——
+    # 1.0 = 纯行业内（瓦解行业霸榜，但小行业组"当第一"容易拿满分）
+    # 0.0 = 纯全池（银行整组天然便宜 → 霸榜 55%）
+    # 0.7 = 默认：既掐掉小池塘泡沫，又保留"绝对便宜"信号（银行应有的优势还回来）
+    "industry_blend": 0.7,
     # —— 择时分位阈值（基于 2005 年至今沪深300 滚动 PE）——
     "timing": {
         "diamond_bottom": 20,   # <20%  钻石底区域
@@ -658,6 +663,22 @@ def within_industry_pct(df, col, higher_better):
     return out
 
 
+def blend_pct(df, col, higher_better, w_ind=0.7):
+    """
+    行业内百分位 × w_ind + 全池百分位 × (1-w_ind)。
+
+    纯行业内（w_ind=1）的问题：小行业组里"当第一"就四项满分（如铁路运输仅 2 只 → 轻松 100 分）。
+    掺入全池分位可保留"绝对便宜"信号，同时抑制小池塘泡沫。
+    """
+    if w_ind >= 1.0:
+        return within_industry_pct(df, col, higher_better)
+    if w_ind <= 0.0:
+        return df[col].rank(pct=True, ascending=higher_better) * 100
+    pooled = df[col].rank(pct=True, ascending=higher_better) * 100
+    ind = within_industry_pct(df, col, higher_better)
+    return w_ind * ind + (1.0 - w_ind) * pooled
+
+
 def build_table(pool, quote, div_feat, industry_map=None):
     """合并数据 + 黑五类硬排除 + 四维打分（行业内百分位）"""
     df = quote.copy()
@@ -699,12 +720,13 @@ def build_table(pool, quote, div_feat, industry_map=None):
     if passed.empty:
         return passed, {"total": total, "passed": 0, "reasons": reasons}
 
-    # —— 四维打分（行业内百分位：瓦解银行整组霸榜）——
+    # —— 四维打分（行业内×w + 全池×(1-w) 混合分位）——
     w = CONFIG["weights"]
-    passed["S_股息"] = within_industry_pct(passed, "股息率", True)
-    passed["S_PE"] = within_industry_pct(passed, "PE", False)      # PE 越低越好
-    passed["S_PB"] = within_industry_pct(passed, "PB", False)      # PB 越低越好（破净最优）
-    passed["S_稳定"] = within_industry_pct(passed, "分红稳定性", True)
+    wb = float(CONFIG.get("industry_blend", 0.7))
+    passed["S_股息"] = blend_pct(passed, "股息率", True, wb)
+    passed["S_PE"] = blend_pct(passed, "PE", False, wb)          # PE 越低越好
+    passed["S_PB"] = blend_pct(passed, "PB", False, wb)          # PB 越低越好（破净最优）
+    passed["S_稳定"] = blend_pct(passed, "分红稳定性", True, wb)
     passed["总分"] = sum(
         passed[k] * v for k, v in zip(["S_股息", "S_PE", "S_PB", "S_稳定"],
                                       [w["dividend"], w["pe"], w["pb"], w["stability"]])
